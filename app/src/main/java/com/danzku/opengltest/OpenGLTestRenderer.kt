@@ -33,6 +33,8 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
     private var postProgram = 0
     private var postVao = 0
     private var postVbo = 0
+    private var motionTexture = 0
+    private var motionFramebuffer = 0
     private var lastFrameNanos = 0L
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -504,7 +506,7 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
         val finalReport = StringBuilder(baseReport()).apply {
             appendLine()
             appendLine("=== FINAL OPENGL DIAGNOSTICS ===")
-            appendLine("FRAMEWORK_DIAGNOSTIC_VERSION: 3")
+            appendLine("FRAMEWORK_DIAGNOSTIC_VERSION: 6")
             appendLine("FRAMEBUFFER_STATUS: 0x" + Integer.toHexString(framebufferStatus))
             appendLine("FRAMEBUFFER_STATUS_NAME: " + framebufferStatusName)
             appendLine("FRAMEBUFFER_COMPLETE: " + (framebufferStatus == GLES30.GL_FRAMEBUFFER_COMPLETE))
@@ -534,7 +536,10 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
             )
             appendLine("DIAGNOSTIC_NOTE: V4 samples only the app-created depth texture through a shader into the app-created color attachment; it does not expose another app's framebuffer.")
             appendLine("SCENE_NOTE: V6 renders a synthetic 3D depth scene into an app-created D24 depth attachment; it does not access another app's framebuffer.")
-            appendLine("TEMPORAL_NOTE: V6 performs local depth-aware history blending using only app-created textures.")
+            appendLine("TEMPORAL_NOTE: V9 uses app-created current/depth/history/motion resources only.")
+            appendLine("V7_MOTION: synthetic per-frame motion field + reprojection")
+            appendLine("V8_VALIDATION: depth-aware history rejection + disocclusion detection")
+            appendLine("V9_RECONSTRUCTION: integrated current-history-depth-motion temporal reconstruction prototype")
         }
 
         writeReport(finalReport.toString())
