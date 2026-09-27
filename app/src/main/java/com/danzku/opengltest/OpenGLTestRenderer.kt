@@ -27,13 +27,12 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
     private var sceneVao = 0
     private var sceneVbo = 0
 
-    private var showDepth = true
     private var temporalHistoryTexture = 0
     private var temporalHistoryFramebuffer = 0
     private var postProgram = 0
     private var postVao = 0
     private var postVbo = 0
-    private var lastFrameNanos = 0L
+    private var historyValid = false
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         createSceneResources()
@@ -55,8 +54,6 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
 
     private fun renderScene() {
         if (width <= 0 || height <= 0 || sceneFramebuffer == 0 || sceneProgram == 0) return
-
-        lastFrameNanos = System.nanoTime()
 
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, sceneFramebuffer)
         GLES30.glViewport(0, 0, width, height)
@@ -97,12 +94,21 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
             GLES30.glUniform1f(GLES30.glGetUniformLocation(postProgram, "uBlend"), 0.72f)
             GLES30.glUniform1f(
                 GLES30.glGetUniformLocation(postProgram, "uHistoryReady"),
-                if (lastFrameNanos == 0L) 0f else 1f
+                if (historyValid) 1f else 0f
             )
             GLES30.glUniform1f(
                 GLES30.glGetUniformLocation(postProgram, "uTime"),
                 SystemClock.uptimeMillis() / 1000f
             )
+            GLES30.glUniform2f(
+                GLES30.glGetUniformLocation(postProgram, "uTexelSize"),
+                1f / width.toFloat(),
+                1f / height.toFloat()
+            )
+
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sceneDepthTexture)
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(postProgram, "uDepth"), 2)
 
             GLES30.glBindVertexArray(postVao)
             GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
@@ -117,6 +123,7 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
                 GLES30.GL_COLOR_BUFFER_BIT,
                 GLES30.GL_NEAREST
             )
+            historyValid = true
         } else {
             GLES30.glBindFramebuffer(GLES30.GL_READ_FRAMEBUFFER, sceneFramebuffer)
             GLES30.glBindFramebuffer(GLES30.GL_DRAW_FRAMEBUFFER, 0)
@@ -285,6 +292,7 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
                 uniform float uBlend;
                 uniform float uHistoryReady;
                 uniform float uTime;
+                uniform vec2 uTexelSize;
                 out vec4 fragColor;
 
                 float linearizeDepth(float depth) {
@@ -321,10 +329,10 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
                     float depthReject = smoothstep(0.015, 0.12, depthDelta);
 
                     float centerDepth = texture(uDepth, vUv).r;
-                    float dl = texture(uDepth, vUv - vec2(1.0 / 1080.0, 0.0)).r;
-                    float dr = texture(uDepth, vUv + vec2(1.0 / 1080.0, 0.0)).r;
-                    float du = texture(uDepth, vUv + vec2(0.0, 1.0 / 2332.0)).r;
-                    float dd = texture(uDepth, vUv - vec2(0.0, 1.0 / 2332.0)).r;
+                    float dl = texture(uDepth, vUv - vec2(uTexelSize.x, 0.0)).r;
+                    float dr = texture(uDepth, vUv + vec2(uTexelSize.x, 0.0)).r;
+                    float du = texture(uDepth, vUv + vec2(0.0, uTexelSize.y)).r;
+                    float dd = texture(uDepth, vUv - vec2(0.0, uTexelSize.y)).r;
                     float depthEdge = clamp(
                         (abs(centerDepth - dl) + abs(centerDepth - dr) +
                          abs(centerDepth - du) + abs(centerDepth - dd)) * 18.0,
@@ -415,7 +423,7 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
         GLES30.glClearColor(0f, 0f, 0f, 1f)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-        lastFrameNanos = 0L
+        historyValid = false
     }
 
     private fun runDiagnosticsFinal() {
@@ -571,6 +579,8 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
             appendLine("V8_VALIDATION: depth rejection + disocclusion mask + depth-edge detection active.")
             appendLine("V8_VALIDATION: depth-aware history rejection + disocclusion detection")
             appendLine("V9_RECONSTRUCTION: integrated current-history-depth-motion temporal reconstruction prototype")
+            appendLine("V9_HISTORY: first-frame history rejection fixed; history becomes valid only after first completed reprojection pass.")
+            appendLine("V9_RECONSTRUCTION_PATH: current color + linearized depth + synthetic motion + depth validation + temporal history.")
         }
 
         writeReport(finalReport.toString())
