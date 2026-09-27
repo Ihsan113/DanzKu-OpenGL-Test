@@ -6,7 +6,6 @@ import android.opengl.GLSurfaceView
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.FloatBuffer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -86,6 +85,7 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
         val depthAttachError = GLES30.glGetError()
 
         val framebufferStatus = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
+        val framebufferStatusName = framebufferStatusName(framebufferStatus)
         val framebufferStatusError = GLES30.glGetError()
 
         GLES30.glViewport(0, 0, width, height)
@@ -165,10 +165,13 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
         val finalReport = StringBuilder(baseReport()).apply {
             appendLine()
             appendLine("=== FINAL OPENGL DIAGNOSTICS ===")
+        appendLine("FRAMEWORK_DIAGNOSTIC_VERSION: 2")
             appendLine("FRAMEBUFFER_STATUS: 0x" + Integer.toHexString(framebufferStatus))
+            appendLine("FRAMEBUFFER_STATUS_NAME: " + framebufferStatusName)
             appendLine("FRAMEBUFFER_COMPLETE: " + (framebufferStatus == GLES30.GL_FRAMEBUFFER_COMPLETE))
             appendLine("COLOR_TEXTURE_SIZE: " + width + "x" + height)
             appendLine("DEPTH_TEXTURE_FORMAT: GL_DEPTH_COMPONENT24")
+            appendLine("DEPTH_CLEAR_REFERENCE: 0.625000")
             appendLine("DEPTH_TEXTURE_CREATED: " + (depthTexture != 0))
             appendLine("COLOR_TEXIMAGE_GL_ERROR: 0x" + Integer.toHexString(colorTexError))
             appendLine("COLOR_ATTACH_GL_ERROR: 0x" + Integer.toHexString(colorAttachError))
@@ -194,6 +197,17 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
         }
 
         writeReport(finalReport.toString())
+    }
+
+    private fun framebufferStatusName(status: Int): String {
+        return when (status) {
+            GLES30.GL_FRAMEBUFFER_COMPLETE -> "GL_FRAMEBUFFER_COMPLETE"
+            GLES30.GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT -> "GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT"
+            GLES30.GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT -> "GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT"
+            GLES30.GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS -> "GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS"
+            GLES30.GL_FRAMEBUFFER_UNSUPPORTED -> "GL_FRAMEBUFFER_UNSUPPORTED"
+            else -> "UNKNOWN"
+        }
     }
 
     private fun createDepthSampleProgram(): Int {
