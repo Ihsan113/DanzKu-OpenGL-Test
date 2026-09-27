@@ -99,6 +99,10 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
                 GLES30.glGetUniformLocation(postProgram, "uHistoryReady"),
                 if (lastFrameNanos == 0L) 0f else 1f
             )
+            GLES30.glUniform1f(
+                GLES30.glGetUniformLocation(postProgram, "uTime"),
+                SystemClock.uptimeMillis() / 1000f
+            )
 
             GLES30.glBindVertexArray(postVao)
             GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
@@ -276,11 +280,20 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
                 precision highp float;
                 in vec2 vUv;
                 uniform sampler2D uCurrent;
+                uniform sampler2D uDepth;
                 uniform sampler2D uHistory;
                 uniform float uBlend;
                 uniform float uHistoryReady;
                 uniform float uTime;
                 out vec4 fragColor;
+
+                float linearizeDepth(float depth) {
+                    const float nearPlane = 0.10;
+                    const float farPlane = 8.0;
+                    float z = depth * 2.0 - 1.0;
+                    return (2.0 * nearPlane * farPlane) /
+                        (farPlane + nearPlane - z * (farPlane - nearPlane));
+                }
 
                 vec2 syntheticMotion(vec2 uv) {
                     float t = uTime;
@@ -301,11 +314,37 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
 
                     vec3 current = texture(uCurrent, vUv).rgb;
                     vec3 history = texture(uHistory, reprojUv).rgb;
+                    float currentDepth = linearizeDepth(texture(uDepth, vUv).r);
+                    float historyDepth = linearizeDepth(texture(uDepth, reprojUv).r);
 
-                    float blend = uBlend * uHistoryReady;
-                    vec3 result = mix(current, history, blend);
+                    float depthDelta = abs(currentDepth - historyDepth);
+                    float depthReject = smoothstep(0.015, 0.12, depthDelta);
 
-                    fragColor = vec4(result, 1.0);
+                    float centerDepth = texture(uDepth, vUv).r;
+                    float dl = texture(uDepth, vUv - vec2(1.0 / 1080.0, 0.0)).r;
+                    float dr = texture(uDepth, vUv + vec2(1.0 / 1080.0, 0.0)).r;
+                    float du = texture(uDepth, vUv + vec2(0.0, 1.0 / 2332.0)).r;
+                    float dd = texture(uDepth, vUv - vec2(0.0, 1.0 / 2332.0)).r;
+                    float depthEdge = clamp(
+                        (abs(centerDepth - dl) + abs(centerDepth - dr) +
+                         abs(centerDepth - du) + abs(centerDepth - dd)) * 18.0,
+                        0.0, 1.0
+                    );
+
+                    float disocclusion = clamp(depthDelta * 9.0 + depthEdge * 0.45, 0.0, 1.0);
+                    float validationMask = max(depthReject, disocclusion);
+                    float blend = uBlend * uHistoryReady * (1.0 - validationMask);
+
+                    vec3 temporal = mix(current, history, blend);
+                    float linearDepthNorm = clamp((currentDepth - 0.35) / 4.8, 0.0, 1.0);
+                    float confidence = 1.0 - validationMask;
+
+                    fragColor = vec4(
+                        mix(temporal, vec3(linearDepthNorm), 0.18) +
+                        vec3(depthEdge * 0.10) +
+                        vec3((1.0 - confidence) * 0.04),
+                        1.0
+                    );
                 }
             """.trimIndent()
         )
@@ -529,6 +568,7 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
             appendLine("TEMPORAL_NOTE: V7 uses only app-created current/history resources.")
             appendLine("V7_MOTION: synthetic per-frame motion field + history reprojection")
             appendLine("V7_VALIDATION: motion-compensated history path active in renderer.")
+            appendLine("V8_VALIDATION: depth rejection + disocclusion mask + depth-edge detection active.")
             appendLine("V8_VALIDATION: depth-aware history rejection + disocclusion detection")
             appendLine("V9_RECONSTRUCTION: integrated current-history-depth-motion temporal reconstruction prototype")
         }
