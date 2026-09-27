@@ -119,7 +119,7 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
             appendLine("DEPTH_TEXTURE_FORMAT: GL_DEPTH_COMPONENT24")
             appendLine("DEPTH_TEXTURE_ATTACHED: true")
             appendLine("COLOR_READBACK_RGBA: " + r + "," + g + "," + b + "," + a)
-            appendLine("DEPTH_READBACK_UINT32: " + (depthValue and 0xFFFFFFFFL))
+            appendLine("DEPTH_READBACK_UINT32: " + (depthValue and 0xFFFFFFFFL).toString())
             appendLine("DEPTH_READBACK_NORMALIZED: " + String.format(Locale.US, "%.8f", depthNormalized))
             appendLine("GL_ERROR_AFTER_READBACK: 0x" + Integer.toHexString(glErrorAfterRead))
             appendLine("DEPTH_TEXTURE_CREATED: " + (depthTexture != 0))
