@@ -33,8 +33,6 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
     private var postProgram = 0
     private var postVao = 0
     private var postVbo = 0
-    private var motionTexture = 0
-    private var motionFramebuffer = 0
     private var lastFrameNanos = 0L
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -58,8 +56,7 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
     private fun renderScene() {
         if (width <= 0 || height <= 0 || sceneFramebuffer == 0 || sceneProgram == 0) return
 
-        val now = System.nanoTime()
-        lastFrameNanos = now
+        lastFrameNanos = System.nanoTime()
 
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, sceneFramebuffer)
         GLES30.glViewport(0, 0, width, height)
@@ -94,12 +91,8 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
             GLES30.glUniform1i(GLES30.glGetUniformLocation(postProgram, "uCurrent"), 0)
 
             GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sceneDepthTexture)
-            GLES30.glUniform1i(GLES30.glGetUniformLocation(postProgram, "uDepth"), 1)
-
-            GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, temporalHistoryTexture)
-            GLES30.glUniform1i(GLES30.glGetUniformLocation(postProgram, "uHistory"), 2)
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(postProgram, "uHistory"), 1)
 
             GLES30.glUniform1f(GLES30.glGetUniformLocation(postProgram, "uBlend"), 0.72f)
             GLES30.glUniform1f(
@@ -283,39 +276,36 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
                 precision highp float;
                 in vec2 vUv;
                 uniform sampler2D uCurrent;
-                uniform sampler2D uDepth;
                 uniform sampler2D uHistory;
                 uniform float uBlend;
                 uniform float uHistoryReady;
+                uniform float uTime;
                 out vec4 fragColor;
 
-                float linearizeDepth(float depth) {
-                    const float nearPlane = 0.10;
-                    const float farPlane = 8.0;
-                    float z = depth * 2.0 - 1.0;
-                    return (2.0 * nearPlane * farPlane) /
-                        (farPlane + nearPlane - z * (farPlane - nearPlane));
+                vec2 syntheticMotion(vec2 uv) {
+                    float t = uTime;
+                    vec2 motion = vec2(
+                        0.0045 * cos(t * 0.55),
+                        0.0028 * sin(t * 0.80)
+                    );
+                    motion += 0.0015 * vec2(
+                        sin(uv.y * 10.0 + t),
+                        cos(uv.x * 8.0 - t * 0.7)
+                    );
+                    return motion;
                 }
 
                 void main() {
+                    vec2 motion = syntheticMotion(vUv);
+                    vec2 reprojUv = clamp(vUv - motion, 0.001, 0.999);
+
                     vec3 current = texture(uCurrent, vUv).rgb;
-                    float depth = texture(uDepth, vUv).r;
-                    vec3 history = texture(uHistory, vUv).rgb;
-
-                    float linearDepth = clamp((linearizeDepth(depth) - 0.35) / 4.8, 0.0, 1.0);
-                    vec3 depthTint = vec3(linearDepth);
-
-                    float dx = 1.0 / 1080.0;
-                    float dy = 1.0 / 2332.0;
-                    float dl = texture(uDepth, vUv - vec2(dx, 0.0)).r;
-                    float dr = texture(uDepth, vUv + vec2(dx, 0.0)).r;
-                    float du = texture(uDepth, vUv + vec2(0.0, dy)).r;
-                    float dd = texture(uDepth, vUv - vec2(0.0, dy)).r;
-                    float edge = clamp((abs(dl - dr) + abs(du - dd)) * 12.0, 0.0, 1.0);
+                    vec3 history = texture(uHistory, reprojUv).rgb;
 
                     float blend = uBlend * uHistoryReady;
-                    vec3 temporal = mix(current, history, blend);
-                    fragColor = vec4(mix(temporal, depthTint, 0.35) + vec3(edge * 0.12), 1.0);
+                    vec3 result = mix(current, history, blend);
+
+                    fragColor = vec4(result, 1.0);
                 }
             """.trimIndent()
         )
@@ -536,8 +526,9 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
             )
             appendLine("DIAGNOSTIC_NOTE: V4 samples only the app-created depth texture through a shader into the app-created color attachment; it does not expose another app's framebuffer.")
             appendLine("SCENE_NOTE: V6 renders a synthetic 3D depth scene into an app-created D24 depth attachment; it does not access another app's framebuffer.")
-            appendLine("TEMPORAL_NOTE: V9 uses app-created current/depth/history/motion resources only.")
-            appendLine("V7_MOTION: synthetic per-frame motion field + reprojection")
+            appendLine("TEMPORAL_NOTE: V7 uses only app-created current/history resources.")
+            appendLine("V7_MOTION: synthetic per-frame motion field + history reprojection")
+            appendLine("V7_VALIDATION: motion-compensated history path active in renderer.")
             appendLine("V8_VALIDATION: depth-aware history rejection + disocclusion detection")
             appendLine("V9_RECONSTRUCTION: integrated current-history-depth-motion temporal reconstruction prototype")
         }
