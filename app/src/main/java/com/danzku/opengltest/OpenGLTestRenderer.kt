@@ -409,12 +409,12 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
         val back = floatArrayOf(0.7f, 0.25f, 0.85f)
 
         val faces = mutableListOf<Float>()
-        faces += face(floatArrayOf(-p,-p,p), floatArrayOf(p,-p,p), floatArrayOf(p,p,p), floatArrayOf(-p,p,p), front)
-        faces += face(floatArrayOf(p,-p,p), floatArrayOf(p,-p,-p), floatArrayOf(p,p,-p), floatArrayOf(p,p,p), side)
-        faces += face(floatArrayOf(-p,p,p), floatArrayOf(p,p,p), floatArrayOf(p,p,-p), floatArrayOf(-p,p,-p), top)
-        faces += face(floatArrayOf(-p,-p,-p), floatArrayOf(p,-p,-p), floatArrayOf(p,-p,p), floatArrayOf(-p,-p,p), bottom)
-        faces += face(floatArrayOf(-p,-p,-p), floatArrayOf(-p,p,-p), floatArrayOf(p,p,-p), floatArrayOf(p,-p,-p), back)
-        faces += face(floatArrayOf(-p,-p,p), floatArrayOf(-p,-p,-p), floatArrayOf(-p,p,-p), floatArrayOf(-p,p,p), side)
+        faces.addAll(face(floatArrayOf(-p,-p,p), floatArrayOf(p,-p,p), floatArrayOf(p,p,p), floatArrayOf(-p,p,p), front).asList())
+        faces.addAll(face(floatArrayOf(p,-p,p), floatArrayOf(p,-p,-p), floatArrayOf(p,p,-p), floatArrayOf(p,p,p), side).asList())
+        faces.addAll(face(floatArrayOf(-p,p,p), floatArrayOf(p,p,p), floatArrayOf(p,p,-p), floatArrayOf(-p,p,-p), top).asList())
+        faces.addAll(face(floatArrayOf(-p,-p,-p), floatArrayOf(p,-p,-p), floatArrayOf(p,-p,p), floatArrayOf(-p,-p,p), bottom).asList())
+        faces.addAll(face(floatArrayOf(-p,-p,-p), floatArrayOf(-p,p,-p), floatArrayOf(p,p,-p), floatArrayOf(p,-p,-p), back).asList())
+        faces.addAll(face(floatArrayOf(-p,-p,p), floatArrayOf(-p,-p,-p), floatArrayOf(-p,p,-p), floatArrayOf(-p,p,p), side).asList())
         return faces.toFloatArray()
     }
 
