@@ -27,7 +27,7 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         this.width = width
         this.height = height
-        runDiagnosticsV4()
+        runDiagnosticsFinal()
     }
 
     override fun onDrawFrame(gl: GL10?) {
@@ -37,7 +37,7 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
     }
 
-    private fun runDiagnosticsV4() {
+    private fun runDiagnosticsFinal() {
         deleteObjects()
 
         val fb = IntArray(1)
@@ -164,7 +164,7 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
 
         val finalReport = StringBuilder(baseReport()).apply {
             appendLine()
-            appendLine("=== FRAMEBUFFER V4 ===")
+            appendLine("=== FINAL OPENGL DIAGNOSTICS ===")
             appendLine("FRAMEBUFFER_STATUS: 0x" + Integer.toHexString(framebufferStatus))
             appendLine("FRAMEBUFFER_COMPLETE: " + (framebufferStatus == GLES30.GL_FRAMEBUFFER_COMPLETE))
             appendLine("COLOR_TEXTURE_SIZE: " + width + "x" + height)
