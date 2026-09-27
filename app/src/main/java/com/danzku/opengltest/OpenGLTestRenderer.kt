@@ -18,17 +18,16 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
     private var framebuffer = 0
     private var colorTexture = 0
     private var depthTexture = 0
-    private var report = StringBuilder()
-
+    
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         report = StringBuilder(baseReport())
-        writeReport(report.toString())
+        writeReport(baseReport())
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         this.width = width
         this.height = height
-        runDiagnostics()
+        runDiagnosticsV3()
     }
 
     override fun onDrawFrame(gl: GL10?) {
@@ -46,7 +45,7 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
     }
 
-    private fun runDiagnostics() {
+    private fun runDiagnosticsV3() {
         deleteObjects()
 
         val fb = IntArray(1)
@@ -93,41 +92,41 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
         val colorBits = IntArray(4)
         GLES30.glGetIntegerv(GLES30.GL_RED_BITS, colorBits, 0)
 
-        val readPixel = ByteBuffer
-            .allocateDirect(4)
-            .order(ByteOrder.nativeOrder())
+        val readPixel = ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder())
+        val depthPixel = ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder())
         GLES30.glReadBuffer(GLES30.GL_COLOR_ATTACHMENT0)
         GLES30.glClearColor(0.25f, 0.50f, 0.75f, 1f)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
-        GLES30.glReadPixels(
-            width / 2, height / 2, 1, 1,
-            GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, readPixel
-        )
+        GLES30.glReadPixels(width / 2, height / 2, 1, 1, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, readPixel)
+        GLES30.glReadPixels(width / 2, height / 2, 1, 1, GLES30.GL_DEPTH_COMPONENT, GLES30.GL_UNSIGNED_INT, depthPixel)
         val r = readPixel.get(0).toInt() and 0xFF
         val g = readPixel.get(1).toInt() and 0xFF
         val b = readPixel.get(2).toInt() and 0xFF
         val a = readPixel.get(3).toInt() and 0xFF
+        val depthValue = depthPixel.int
+        val depthNormalized = (depthValue.toDouble() / 4294967295.0).coerceIn(0.0, 1.0)
         val glErrorAfterRead = GLES30.glGetError()
 
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
 
-        report = StringBuilder(baseReport()).apply {
+        val finalReport = StringBuilder(baseReport()).apply {
             appendLine()
-            appendLine("=== FRAMEBUFFER V2 ===")
+            appendLine("=== FRAMEBUFFER V3 ===")
             appendLine("FRAMEBUFFER_STATUS: 0x" + Integer.toHexString(status))
             appendLine("FRAMEBUFFER_COMPLETE: " + (status == GLES30.GL_FRAMEBUFFER_COMPLETE))
             appendLine("COLOR_TEXTURE_SIZE: " + width + "x" + height)
             appendLine("DEPTH_TEXTURE_FORMAT: GL_DEPTH_COMPONENT24")
             appendLine("DEPTH_TEXTURE_ATTACHED: true")
-            appendLine("GL_RED_BITS_QUERY: " + colorBits[0])
             appendLine("COLOR_READBACK_RGBA: " + r + "," + g + "," + b + "," + a)
+            appendLine("DEPTH_READBACK_UINT32: " + (depthValue and 0xFFFFFFFFL))
+            appendLine("DEPTH_READBACK_NORMALIZED: " + String.format(Locale.US, "%.8f", depthNormalized))
             appendLine("GL_ERROR_AFTER_READBACK: 0x" + Integer.toHexString(glErrorAfterRead))
             appendLine("DEPTH_TEXTURE_CREATED: " + (depthTexture != 0))
-            appendLine("DIAGNOSTIC_NOTE: readback validates the test framebuffer only; it does not expose another app's framebuffer.")
+            appendLine("DEPTH_READBACK_SUPPORTED: " + (glErrorAfterRead == GLES30.GL_NO_ERROR))
+            appendLine("DIAGNOSTIC_NOTE: this reads only the test framebuffer created by this app.")
         }
-
-        writeReport(report.toString())
+        writeReport(finalReport.toString())
     }
 
     private fun baseReport(): String {
