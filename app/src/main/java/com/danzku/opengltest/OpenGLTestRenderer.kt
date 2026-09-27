@@ -28,10 +28,16 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
     private var sceneVbo = 0
 
     private var showDepth = true
+    private var temporalHistoryTexture = 0
+    private var temporalHistoryFramebuffer = 0
+    private var postProgram = 0
+    private var postVao = 0
+    private var postVbo = 0
     private var lastFrameNanos = 0L
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         createSceneResources()
+        createPostResources()
         writeReport(baseReport())
     }
 
@@ -39,6 +45,7 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
         this.width = width
         this.height = height
         runDiagnosticsFinal()
+        recreateTemporalResources()
         renderScene()
     }
 
@@ -50,7 +57,6 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
         if (width <= 0 || height <= 0 || sceneFramebuffer == 0 || sceneProgram == 0) return
 
         val now = System.nanoTime()
-        val delta = if (lastFrameNanos == 0L) 0f else ((now - lastFrameNanos) / 1_000_000_000f).coerceAtMost(0.1f)
         lastFrameNanos = now
 
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, sceneFramebuffer)
@@ -62,27 +68,67 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
 
         GLES30.glUseProgram(sceneProgram)
-
-        val timeLoc = GLES30.glGetUniformLocation(sceneProgram, "uTime")
-        val aspectLoc = GLES30.glGetUniformLocation(sceneProgram, "uAspect")
-        val depthModeLoc = GLES30.glGetUniformLocation(sceneProgram, "uDepthMode")
-        GLES30.glUniform1f(timeLoc, SystemClock.uptimeMillis() / 1000f)
-        GLES30.glUniform1f(aspectLoc, width.toFloat() / height.coerceAtLeast(1).toFloat())
-        GLES30.glUniform1i(depthModeLoc, if (showDepth) 1 else 0)
-
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(sceneProgram, "uTime"),
+            SystemClock.uptimeMillis() / 1000f
+        )
+        GLES30.glUniform1f(
+            GLES30.glGetUniformLocation(sceneProgram, "uAspect"),
+            width.toFloat() / height.coerceAtLeast(1).toFloat()
+        )
         GLES30.glBindVertexArray(sceneVao)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 36)
         GLES30.glBindVertexArray(0)
         GLES30.glUseProgram(0)
 
-        GLES30.glBindFramebuffer(GLES30.GL_READ_FRAMEBUFFER, sceneFramebuffer)
-        GLES30.glBindFramebuffer(GLES30.GL_DRAW_FRAMEBUFFER, 0)
-        GLES30.glBlitFramebuffer(
-            0, 0, width, height,
-            0, 0, width, height,
-            GLES30.GL_COLOR_BUFFER_BIT,
-            GLES30.GL_LINEAR
-        )
+        if (postProgram != 0 && temporalHistoryTexture != 0) {
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+            GLES30.glDisable(GLES30.GL_DEPTH_TEST)
+            GLES30.glViewport(0, 0, width, height)
+            GLES30.glUseProgram(postProgram)
+
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sceneColorTexture)
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(postProgram, "uCurrent"), 0)
+
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, sceneDepthTexture)
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(postProgram, "uDepth"), 1)
+
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, temporalHistoryTexture)
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(postProgram, "uHistory"), 2)
+
+            GLES30.glUniform1f(GLES30.glGetUniformLocation(postProgram, "uBlend"), 0.72f)
+            GLES30.glUniform1f(
+                GLES30.glGetUniformLocation(postProgram, "uHistoryReady"),
+                if (lastFrameNanos == 0L) 0f else 1f
+            )
+
+            GLES30.glBindVertexArray(postVao)
+            GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+            GLES30.glBindVertexArray(0)
+            GLES30.glUseProgram(0)
+
+            GLES30.glBindFramebuffer(GLES30.GL_READ_FRAMEBUFFER, 0)
+            GLES30.glBindFramebuffer(GLES30.GL_DRAW_FRAMEBUFFER, temporalHistoryFramebuffer)
+            GLES30.glBlitFramebuffer(
+                0, 0, width, height,
+                0, 0, width, height,
+                GLES30.GL_COLOR_BUFFER_BIT,
+                GLES30.GL_NEAREST
+            )
+        } else {
+            GLES30.glBindFramebuffer(GLES30.GL_READ_FRAMEBUFFER, sceneFramebuffer)
+            GLES30.glBindFramebuffer(GLES30.GL_DRAW_FRAMEBUFFER, 0)
+            GLES30.glBlitFramebuffer(
+                0, 0, width, height,
+                0, 0, width, height,
+                GLES30.GL_COLOR_BUFFER_BIT,
+                GLES30.GL_LINEAR
+            )
+        }
+
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
     }
 
@@ -217,6 +263,128 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
         )
 
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+    }
+
+    private fun createPostResources() {
+        postProgram = createProgram(
+            """
+                #version 300 es
+                layout(location = 0) in vec2 aPosition;
+                out vec2 vUv;
+                void main() {
+                    vUv = aPosition * 0.5 + 0.5;
+                    gl_Position = vec4(aPosition, 0.0, 1.0);
+                }
+            """.trimIndent(),
+            """
+                #version 300 es
+                precision highp float;
+                in vec2 vUv;
+                uniform sampler2D uCurrent;
+                uniform sampler2D uDepth;
+                uniform sampler2D uHistory;
+                uniform float uBlend;
+                uniform float uHistoryReady;
+                out vec4 fragColor;
+
+                float linearizeDepth(float depth) {
+                    const float nearPlane = 0.10;
+                    const float farPlane = 8.0;
+                    float z = depth * 2.0 - 1.0;
+                    return (2.0 * nearPlane * farPlane) /
+                        (farPlane + nearPlane - z * (farPlane - nearPlane));
+                }
+
+                void main() {
+                    vec3 current = texture(uCurrent, vUv).rgb;
+                    float depth = texture(uDepth, vUv).r;
+                    vec3 history = texture(uHistory, vUv).rgb;
+
+                    float linearDepth = clamp((linearizeDepth(depth) - 0.35) / 4.8, 0.0, 1.0);
+                    vec3 depthTint = vec3(linearDepth);
+
+                    float dx = 1.0 / 1080.0;
+                    float dy = 1.0 / 2332.0;
+                    float dl = texture(uDepth, vUv - vec2(dx, 0.0)).r;
+                    float dr = texture(uDepth, vUv + vec2(dx, 0.0)).r;
+                    float du = texture(uDepth, vUv + vec2(0.0, dy)).r;
+                    float dd = texture(uDepth, vUv - vec2(0.0, dy)).r;
+                    float edge = clamp((abs(dl - dr) + abs(du - dd)) * 12.0, 0.0, 1.0);
+
+                    float blend = uBlend * uHistoryReady;
+                    vec3 temporal = mix(current, history, blend);
+                    fragColor = vec4(mix(temporal, depthTint, 0.35) + vec3(edge * 0.12), 1.0);
+                }
+            """.trimIndent()
+        )
+
+        val quad = floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
+        val buffer = ByteBuffer.allocateDirect(quad.size * 4)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
+        buffer.put(quad).position(0)
+
+        val vao = IntArray(1)
+        val vbo = IntArray(1)
+        GLES30.glGenVertexArrays(1, vao, 0)
+        GLES30.glGenBuffers(1, vbo, 0)
+        postVao = vao[0]
+        postVbo = vbo[0]
+
+        GLES30.glBindVertexArray(postVao)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, postVbo)
+        GLES30.glBufferData(
+            GLES30.GL_ARRAY_BUFFER,
+            quad.size * 4,
+            buffer,
+            GLES30.GL_STATIC_DRAW
+        )
+        GLES30.glEnableVertexAttribArray(0)
+        GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, 0, 0)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
+        GLES30.glBindVertexArray(0)
+    }
+
+    private fun recreateTemporalResources() {
+        if (temporalHistoryFramebuffer != 0) {
+            GLES30.glDeleteFramebuffers(1, intArrayOf(temporalHistoryFramebuffer), 0)
+        }
+        if (temporalHistoryTexture != 0) {
+            GLES30.glDeleteTextures(1, intArrayOf(temporalHistoryTexture), 0)
+        }
+
+        val tex = IntArray(1)
+        val fb = IntArray(1)
+        GLES30.glGenTextures(1, tex, 0)
+        GLES30.glGenFramebuffers(1, fb, 0)
+        temporalHistoryTexture = tex[0]
+        temporalHistoryFramebuffer = fb[0]
+
+        configureColorTexture(temporalHistoryTexture)
+        GLES30.glTexImage2D(
+            GLES30.GL_TEXTURE_2D,
+            0,
+            GLES30.GL_RGBA8,
+            width,
+            height,
+            0,
+            GLES30.GL_RGBA,
+            GLES30.GL_UNSIGNED_BYTE,
+            null
+        )
+
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, temporalHistoryFramebuffer)
+        GLES30.glFramebufferTexture2D(
+            GLES30.GL_FRAMEBUFFER,
+            GLES30.GL_COLOR_ATTACHMENT0,
+            GLES30.GL_TEXTURE_2D,
+            temporalHistoryTexture,
+            0
+        )
+        GLES30.glClearColor(0f, 0f, 0f, 1f)
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        lastFrameNanos = 0L
     }
 
     private fun runDiagnosticsFinal() {
@@ -365,7 +533,8 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
                         sampleRgba[3] == 255)
             )
             appendLine("DIAGNOSTIC_NOTE: V4 samples only the app-created depth texture through a shader into the app-created color attachment; it does not expose another app's framebuffer.")
-            appendLine("SCENE_NOTE: V5 renders a synthetic 3D depth scene into an app-created D24 depth attachment; it does not access another app's framebuffer.")
+            appendLine("SCENE_NOTE: V6 renders a synthetic 3D depth scene into an app-created D24 depth attachment; it does not access another app's framebuffer.")
+            appendLine("TEMPORAL_NOTE: V6 performs local depth-aware history blending using only app-created textures.")
         }
 
         writeReport(finalReport.toString())
@@ -531,6 +700,11 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
         if (sceneFramebuffer != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(sceneFramebuffer), 0)
         if (sceneColorTexture != 0) GLES30.glDeleteTextures(1, intArrayOf(sceneColorTexture), 0)
         if (sceneDepthTexture != 0) GLES30.glDeleteTextures(1, intArrayOf(sceneDepthTexture), 0)
+        if (temporalHistoryFramebuffer != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(temporalHistoryFramebuffer), 0)
+        if (temporalHistoryTexture != 0) GLES30.glDeleteTextures(1, intArrayOf(temporalHistoryTexture), 0)
+        if (postVao != 0) GLES30.glDeleteVertexArrays(1, intArrayOf(postVao), 0)
+        if (postVbo != 0) GLES30.glDeleteBuffers(1, intArrayOf(postVbo), 0)
+        if (postProgram != 0) GLES30.glDeleteProgram(postProgram)
         sceneVao = 0
         sceneVbo = 0
         sceneProgram = 0
