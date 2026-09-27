@@ -2,6 +2,7 @@ package com.danzku.opengltest
 
 import android.content.Context
 import android.opengl.GLES30
+import java.nio.FloatBuffer
 import android.opengl.GLSurfaceView
 import java.io.File
 import java.text.SimpleDateFormat
@@ -44,7 +45,7 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
     }
 
-    private fun runDiagnosticsV3() {
+    private fun runDiagnosticsV4() {
         deleteObjects()
 
         val fb = IntArray(1)
@@ -82,81 +83,152 @@ class OpenGLTestRenderer(private val context: Context) : GLSurfaceView.Renderer 
             GLES30.GL_TEXTURE_2D, 0, GLES30.GL_DEPTH_COMPONENT24,
             width, height, 0, GLES30.GL_DEPTH_COMPONENT, GLES30.GL_UNSIGNED_INT, null
         )
+        val depthTexError = GLES30.glGetError()
+
         GLES30.glFramebufferTexture2D(
             GLES30.GL_FRAMEBUFFER, GLES30.GL_DEPTH_ATTACHMENT,
             GLES30.GL_TEXTURE_2D, depthTexture, 0
         )
+        val attachError = GLES30.glGetError()
 
         val status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
-        val colorBits = IntArray(4)
-        GLES30.glGetIntegerv(GLES30.GL_RED_BITS, colorBits, 0)
+        val statusError = GLES30.glGetError()
 
-        val readPixel = ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder())
-        val depthPixel = ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder())
-        GLES30.glReadBuffer(GLES30.GL_COLOR_ATTACHMENT0)
-        GLES30.glClearColor(0.25f, 0.50f, 0.75f, 1f)
+        GLES30.glViewport(0, 0, width, height)
+        GLES30.glEnable(GLES30.GL_DEPTH_TEST)
+        GLES30.glDepthFunc(GLES30.GL_ALWAYS)
+        GLES30.glClearDepthf(0.625f)
+        GLES30.glClearColor(0f, 0f, 0f, 1f)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
-        GLES30.glReadPixels(width / 2, height / 2, 1, 1, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, readPixel)
-        GLES30.glReadPixels(width / 2, height / 2, 1, 1, GLES30.GL_DEPTH_COMPONENT, GLES30.GL_UNSIGNED_INT, depthPixel)
-        val r = readPixel.get(0).toInt() and 0xFF
-        val g = readPixel.get(1).toInt() and 0xFF
-        val b = readPixel.get(2).toInt() and 0xFF
-        val a = readPixel.get(3).toInt() and 0xFF
-        val depthValue = depthPixel.int
-        val depthNormalized = (depthValue.toDouble() / 4294967295.0).coerceIn(0.0, 1.0)
-        val glErrorAfterRead = GLES30.glGetError()
+        val clearError = GLES30.glGetError()
 
+        val depthSampleProgram = createDepthSampleProgram()
+        var shaderError = GLES30.glGetError()
+
+        var sampledDepth = -1f
+        var sampleRgba = intArrayOf(0, 0, 0, 0)
+        if (depthSampleProgram != 0 && status == GLES30.GL_FRAMEBUFFER_COMPLETE) {
+            GLES30.glUseProgram(depthSampleProgram)
+            val attribPos = GLES30.glGetAttribLocation(depthSampleProgram, "aPosition")
+            val depthLoc = GLES30.glGetUniformLocation(depthSampleProgram, "uDepth")
+
+            val vertices = floatArrayOf(
+                -1f, -1f, 1f, -1f, -1f, 1f,
+                 1f, -1f, 1f,  1f, -1f, 1f
+            )
+            val vertexBuffer = FloatBuffer.allocate(vertices.size)
+            vertexBuffer.put(vertices).position(0)
+
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, depthTexture)
+            GLES30.glUniform1i(depthLoc, 0)
+            GLES30.glEnableVertexAttribArray(attribPos)
+            GLES30.glVertexAttribPointer(attribPos, 2, GLES30.GL_FLOAT, false, 0, vertexBuffer)
+            GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+            GLES30.glDisableVertexAttribArray(attribPos)
+            shaderError = GLES30.glGetError()
+
+            val samplePixel = ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder())
+            GLES30.glReadBuffer(GLES30.GL_COLOR_ATTACHMENT0)
+            GLES30.glReadPixels(width / 2, height / 2, 1, 1, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, samplePixel)
+            val readError = GLES30.glGetError()
+
+            sampleRgba = intArrayOf(
+                samplePixel.get(0).toInt() and 0xFF,
+                samplePixel.get(1).toInt() and 0xFF,
+                samplePixel.get(2).toInt() and 0xFF,
+                samplePixel.get(3).toInt() and 0xFF
+            )
+            sampledDepth = sampleRgba[0] / 255f
+            shaderError = readError
+            GLES30.glUseProgram(0)
+        }
+
+        GLES30.glDeleteProgram(depthSampleProgram)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
 
         val finalReport = StringBuilder(baseReport()).apply {
             appendLine()
-            appendLine("=== FRAMEBUFFER V3 ===")
+            appendLine("=== FRAMEBUFFER V4 ===")
             appendLine("FRAMEBUFFER_STATUS: 0x" + Integer.toHexString(status))
             appendLine("FRAMEBUFFER_COMPLETE: " + (status == GLES30.GL_FRAMEBUFFER_COMPLETE))
             appendLine("COLOR_TEXTURE_SIZE: " + width + "x" + height)
             appendLine("DEPTH_TEXTURE_FORMAT: GL_DEPTH_COMPONENT24")
-            appendLine("DEPTH_TEXTURE_ATTACHED: true")
-            appendLine("COLOR_READBACK_RGBA: " + r + "," + g + "," + b + "," + a)
-            appendLine("DEPTH_READBACK_UINT32: " + (depthValue.toLong() and 0xFFFFFFFFL).toString())
-            appendLine("DEPTH_READBACK_NORMALIZED: " + String.format(Locale.US, "%.8f", depthNormalized))
-            appendLine("GL_ERROR_AFTER_READBACK: 0x" + Integer.toHexString(glErrorAfterRead))
             appendLine("DEPTH_TEXTURE_CREATED: " + (depthTexture != 0))
-            appendLine("DEPTH_READBACK_SUPPORTED: " + (glErrorAfterRead == GLES30.GL_NO_ERROR))
-            appendLine("DIAGNOSTIC_NOTE: this reads only the test framebuffer created by this app.")
+            appendLine("DEPTH_TEXIMAGE_GL_ERROR: 0x" + Integer.toHexString(depthTexError))
+            appendLine("DEPTH_ATTACH_GL_ERROR: 0x" + Integer.toHexString(attachError))
+            appendLine("FRAMEBUFFER_STATUS_GL_ERROR: 0x" + Integer.toHexString(statusError))
+            appendLine("DEPTH_CLEAR_GL_ERROR: 0x" + Integer.toHexString(clearError))
+            appendLine("DEPTH_SHADER_GL_ERROR: 0x" + Integer.toHexString(shaderError))
+            appendLine("DEPTH_SHADER_SAMPLE_RGBA: " + sampleRgba.joinToString(","))
+            appendLine("DEPTH_SHADER_SAMPLE_NORMALIZED: " + String.format(Locale.US, "%.6f", sampledDepth))
+            appendLine("DEPTH_TEXTURE_SAMPLE_SUPPORTED: " + (depthSampleProgram != 0 && shaderError == GLES30.GL_NO_ERROR && sampleRgba[3] != 0))
+            appendLine("DIAGNOSTIC_NOTE: V4 samples the app-created depth texture through a shader into the app-created color attachment; it does not expose another app's framebuffer.")
         }
         writeReport(finalReport.toString())
     }
 
-    private fun baseReport(): String {
-        val ext = GLES30.glGetString(GLES30.GL_EXTENSIONS) ?: ""
-        return buildString {
-            appendLine("DanzKu OpenGL Test")
-            appendLine("DATE: " + SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
-            appendLine("GL_VERSION: " + (GLES30.glGetString(GLES30.GL_VERSION) ?: "unknown"))
-            appendLine("GL_RENDERER: " + (GLES30.glGetString(GLES30.GL_RENDERER) ?: "unknown"))
-            appendLine("GL_VENDOR: " + (GLES30.glGetString(GLES30.GL_VENDOR) ?: "unknown"))
-            appendLine("GLSL_VERSION: " + (GLES30.glGetString(GLES30.GL_SHADING_LANGUAGE_VERSION) ?: "unknown"))
-            appendLine("SURFACE_SIZE: " + width + "x" + height)
-            appendLine("HAS_GL_OES_depth_texture: " + ext.contains("GL_OES_depth_texture"))
-            appendLine("HAS_GL_EXT_shader_framebuffer_fetch: " + ext.contains("GL_EXT_shader_framebuffer_fetch"))
-            appendLine("HAS_GL_ARM_shader_framebuffer_fetch: " + ext.contains("GL_ARM_shader_framebuffer_fetch"))
+    private fun createDepthSampleProgram(): Int {
+        val vertexSource = """
+            #version 300 es
+            in vec2 aPosition;
+            void main() {
+                gl_Position = vec4(aPosition, 0.0, 1.0);
+            }
+        """.trimIndent()
+
+        val fragmentSource = """
+            #version 300 es
+            precision highp float;
+            uniform sampler2D uDepth;
+            out vec4 fragColor;
+            void main() {
+                float d = texture(uDepth, vec2(0.5, 0.5)).r;
+                fragColor = vec4(d, d, d, 1.0);
+            }
+        """.trimIndent()
+
+        fun compile(type: Int, source: String): Int {
+            val shader = GLES30.glCreateShader(type)
+            if (shader == 0) return 0
+            GLES30.glShaderSource(shader, source)
+            GLES30.glCompileShader(shader)
+            val compiled = IntArray(1)
+            GLES30.glGetShaderiv(shader, GLES30.GL_COMPILE_STATUS, compiled, 0)
+            if (compiled[0] == 0) {
+                GLES30.glDeleteShader(shader)
+                return 0
+            }
+            return shader
         }
+
+        val vs = compile(GLES30.GL_VERTEX_SHADER, vertexSource)
+        if (vs == 0) return 0
+        val fs = compile(GLES30.GL_FRAGMENT_SHADER, fragmentSource)
+        if (fs == 0) {
+            GLES30.glDeleteShader(vs)
+            return 0
+        }
+
+        val program = GLES30.glCreateProgram()
+        if (program == 0) {
+            GLES30.glDeleteShader(vs)
+            GLES30.glDeleteShader(fs)
+            return 0
+        }
+        GLES30.glAttachShader(program, vs)
+        GLES30.glAttachShader(program, fs)
+        GLES30.glLinkProgram(program)
+        val linked = IntArray(1)
+        GLES30.glGetProgramiv(program, GLES30.GL_LINK_STATUS, linked, 0)
+        GLES30.glDeleteShader(vs)
+        GLES30.glDeleteShader(fs)
+        if (linked[0] == 0) {
+            GLES30.glDeleteProgram(program)
+            return 0
+        }
+        return program
     }
 
-    private fun writeReport(text: String) {
-        runCatching {
-            val dir = context.getExternalFilesDir(null) ?: return
-            File(dir, "danzku_opengl_report.txt").writeText(text)
-        }
-    }
 
-    private fun deleteObjects() {
-        if (framebuffer != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(framebuffer), 0)
-        if (colorTexture != 0) GLES30.glDeleteTextures(1, intArrayOf(colorTexture), 0)
-        if (depthTexture != 0) GLES30.glDeleteTextures(1, intArrayOf(depthTexture), 0)
-        framebuffer = 0
-        colorTexture = 0
-        depthTexture = 0
-    }
-}
